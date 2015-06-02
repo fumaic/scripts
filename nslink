@@ -1,0 +1,299 @@
+#!/bin/sh
+#
+# Description: NetAPP Symlink creation script
+#
+# Changes:
+#
+# 06/01/2015            fix find issue with search no starting at /
+# 06/02/2015            fix destination directory with spaces issue 
+#
+#
+
+
+if [ "$EUID" -ne 100015 ]
+  then echo "Please run as symlinkadm user (sudo)"
+  exit
+fi
+
+prog="nslink"
+
+RETVAL=0
+NO_ARGS=0 
+
+# NetAPP CIFS volumes
+#
+ns_1_dir=/netapp/vol_mg0pnap01s01_001
+ns_2_dir=/netapp/vol_mg0pnap01s01_002
+
+usage() {
+      echo ""
+      echo "Add Symlink"
+      echo "-----------"
+      echo "Usage: $prog -A -s \"\\\aqrcapital.com\Shares\FS007\Testlink\" -d \"\\\aqrcapital.com\Shares\FS007\Testdir\" "
+      echo ""
+      echo ""
+      echo "           -A   Add new Symlink"
+      echo "           -s  -the symlink"
+      echo "           -d  -the destination directory"
+      echo ""
+      echo "Remove Symlink"
+      echo "--------------"
+      echo "Usage: $prog -R -s \"\\\aqrcapital.com\Shares\FS007\Testlink\" -d \"\\\aqrcapital.com\Shares\FS007\Testdir\" "
+      echo ""
+      echo "           -R   Remove existing Symlink"
+      echo "           -s  -the symlink"
+      echo "           -d  -the destination directory"
+      echo ""
+}
+
+get_shares() {
+   if [ -d $ns_1_dir ]; then
+       ns_1_shares="`ls -C $ns_1_dir`"
+   else
+      if [ -d $ns_2_dir ]; then
+         ns_2_shares="`ls -C $ns_2_dir`"
+      fi
+   fi
+
+   # this assumes ns_1_dir and ns_2_dir are both mounted... 
+   if [ "$ns_1_shares" != " " ]; then
+      echo ""
+      echo "Available DFS CIFS Shares: \\\\aqrcapital.com\\Shares\\FS...\\"
+      echo "-------------------------------------------------------------------------------------"
+      echo "$ns_1_shares $ns_2_shares"
+      echo ""
+      exit 1
+   fi
+}
+
+setup_vars() {
+
+vserver=mg0pnap01
+cifs_server=MG0PNAP01S01
+remote_cifs_server=aqrcapital.com
+cifs_share=Shares
+netapp_cifs_server=mg0pnap01s01
+logsdir=/home/symlinkadm/scripts/logs
+foundlog=foundlinks
+output=$logsdir/output
+netapp_links=$logsdir/netapp.symlinks
+nfs_unixdir_001=/netapp/vol_mg0pnap01s01_001
+nfs_unixdir_002=/netapp/vol_mg0pnap01s01_002
+dircount=0
+symcount=0
+
+}
+
+setup_link_paths() {
+    
+         s_dir=$(echo "$srcdir" | sed -e 's/\s\\\\.*$//' | sed -e 's/^.*Shares//g' | sed -e 's/\\/\//g' | sed -e 's/^#//g')
+         d_dir=$(echo "$destdir" | sed -e 's/\\\\.* \\\\//' | sed -e 's/^.*Shares//g' | sed -e 's/\\/\//g' | sed -e  's/^#//g')
+
+         symdir_path=`dirname $s_dir`
+
+         n=1
+         last_s_dir_char="echo ${s_dir:${#s_dir} -$n}"
+         last_d_dir_char="echo ${d_dir:${#d_dir} -$n}"
+
+         [ ! -z `echo $last_s_dir_char | tr -d "[:alnum:]"` ] && echo  && echo "$last_s_dir_char is not valid for -s argument [a-z][0-9]" && exit 1
+         [ ! -z `echo $last_d_dir_char | tr -d "[:alnum:]"` ] && echo  && echo "$last_d_dir_char is not valid for -d argument [a-z][0-9]" && exit 1
+
+         [ ! -d $nfs_unixdir_001$symdir_path ] && echo "" &&  echo "Symlink Source directory: $nfs_unixdir_001$symdir_path does not exist... exiting...." && echo "" && exit 1 && exit
+         #[ ! -d $nfs_unixdir_002$symdir_path ] && echo "" &&  echo "Symlink Source directory: $nfs_unixdir_001$symdir_path does not exist... exiting...." && echo "" && exit 1
+
+         echo ""
+}
+
+check_symlink_input() {
+
+         s_dir=$(echo "$srcdir" | sed -e 's/\s\\\\.*$//' | sed -e 's/^.*Shares//g' | sed -e 's/\\/\//g' | sed -e 's/^#//g')
+         d_dir=$(echo "$destdir" | sed -e 's/\\\\.* \\\\//' | sed -e 's/^.*Shares//g' | sed -e 's/\\/\//g' | sed -e  's/^#//g')
+         n=1
+         last_s_dir_char="echo ${s_dir:${#s_dir} -$n}"
+         [ ! -z `echo $last_s_dir_char | tr -d "[:alnum:]"` ] && echo  && echo "$last_s_dir_char is not valid for -s argument [a-z][0-9]" && exit 1
+         share=$(echo "$srcdir" | sed -e 's/^.*Shares\\/ /g' | sed -e 's/\\.*$//g' | sed -e 's/^ //g')
+
+         echo ""
+
+}
+
+
+check_for_symlinks(){
+
+if [ ! -d $nfs_unixdir_001 ]; then
+   echo "nfs_unixdir_001 not mounted. exiting..."
+   exit 0
+fi
+
+echo "srcdir" | ( while read line
+do
+
+   if [ -d "$nfs_unixdir_001$line" ] || [ -L "$nfs_unixdir_001$line" ]; then 
+      let dircount=dircount+1
+      echo "$nfs_unixdir_001$line found" >> $logsdir/foundlog 2>&1
+   elif
+      [ -d "$nfs_unixdir_002$line" ] || [ -L "$nfs_unixdir_001$line" ]; then 
+          let dircount=dircount+1
+          echo "$nfs_unixdir_002$line found" >> $logsdir/$foundlog 2>&1
+   else
+
+        share=$(echo "$srcdir" | sed -e 's/^.*Shares\\/ /g' | sed -e 's/\\.*$//g' | sed -e 's/^ //g')
+ 
+        echo ""
+        echo "DFS CIFS share: $share"
+        echo "symlink:        $srcdir"
+        echo "destdir:        $destdir"
+
+        cd $nfs_unixdir_001/$share
+
+        find $nfs_unixdir_001$s_dir -type l > /dev/null 2>&1
+        if [ $? -eq 0 ]; then
+           echo ""
+           echo "SymLink $nfs_unixdir_001$s_dir already exists... exiting..."
+           echo ""
+           echo "Total Symlinks created: $symcount"
+           echo "" 
+           exit
+        else
+           echo ""
+           echo "Creating unix symlink now for: $nfs_unixdir_001$s_dir"
+           let symcount=symcount+1
+            
+           cd $nfs_unixdir_001/$symdir_path
+           pwd
+
+           vol=`echo $nfs_unixdir_001 | sed -e 's/^\/netapp//g'`
+           link=`echo $s_dir | sed -e 's/^\/FS.*\///g'`
+
+           echo "ln -s $vol$shares$d_dir $link"
+           ln -s "$vol$shares$d_dir" "$link"
+
+#           get_vserver_symlinks
+           create_vserver_symlinks
+        fi
+
+   fi
+done
+
+
+) # end while loop to keep counter value
+
+}
+
+get_vserver_symlinks() {
+
+ssh -o ConnectTimeout=60 $vserver vserver cifs symlink show | egrep -v '(^Vserver|^--|^.* entries)'  > $output 2>&1
+
+if [ $? -eq 0 ]; then
+   dos2unix $output -q > /dev/null 2>&1
+   echo ""
+   sed '/^$/d' $output > $netapp_links 2>&1
+   echo ""
+fi
+
+}
+
+create_vserver_symlinks() {
+
+      echo "Creating symlink definition for $i on NetAPP Vserver: $vserver"
+
+      echo "vserver cifs symlink create -vserver $cifs_server -unix-path "$vol$shares$d_dir/" -cifs-server "$remote_cifs_server" -share-name "$cifs_share" -cifs-path "$shares$d_dir/" -locality widelink"
+
+      ssh -o ConnectTimeout=60 $vserver vserver cifs symlink create -vserver \"$cifs_server\" -unix-path \"$vol$shares$d_dir/\" -cifs-server \"$remote_cifs_server\" -share-name \"$cifs_share\" -cifs-path \"$shares$d_dir/\" -locality widelink
+
+
+}
+
+delete_unix_symlink() {
+
+      cd / 
+      find $nfs_unixdir_001$s_dir -type l > /dev/null 2>&1
+      if [ $? -eq 0 ]; then
+         echo ""
+         echo "SymLink $nfs_unixdir_001$s_dir found "
+         echo "" 
+
+         echo "Current working directory: $nfs_unixdir_001/$share"
+         cd $nfs_unixdir_001/$share
+         echo 
+
+         echo "Removing Unix Symlink: $nfs_unixdir_001$s_dir"
+         echo ""
+         rm -v $nfs_unixdir_001$s_dir
+      else
+         echo "Symlink $nfs_unixdir_001$s_dir NOT found...exiting..."
+         echo ""
+      fi
+
+}
+
+delete_vserver_symlink() {
+
+   vol=`echo $nfs_unixdir_001 | sed -e 's/^\/netapp//g'`
+
+   echo "Deleting symlink definition for $i on NetAPP Vserver: $vserver"
+   echo ""
+   echo "Executing: vserver cifs symlink delete -unix-path "$vol$shares$d_dir/" -vserver "$cifs_server" "
+   ssh -o ConnectTimeout=60 $vserver vserver cifs symlink delete -unix-path \"$vol$shares$d_dir/\" -vserver \"$cifs_server\"
+
+}
+
+cleanup() {
+
+rm $workfile
+rm $srcfile.tmp.$$
+
+}
+
+#------------ Start program -----------------------------------------------------------------------"
+
+if [ $# -eq "$NO_ARGS" ] || [ $# -lt 3 ]    # Script invoked with no command-line args?
+then
+   usage
+   get_shares
+fi  
+
+while getopts ":hAR" Option
+do
+
+case "$1" in
+   -A)
+      srcdir="\\$3"
+      destdir="\\$5"
+
+      setup_vars
+      setup_link_paths
+      check_for_symlinks
+  
+      RETVAL=$?
+      echo
+      exit
+      ;;
+
+   -R)
+      srcdir="\\$3"
+      destdir="\\$5"
+
+      setup_vars
+      check_symlink_input
+      setup_link_paths
+      delete_unix_symlink
+#      delete_vserver_symlink
+
+      RETVAL=$?
+      echo 
+      exit
+      ;;
+
+   *)
+      echo
+      usage
+esac
+
+shift $((OPTIND - 1))
+
+done
+
+echo "id is: `id`"
+
+exit $RETVAL
